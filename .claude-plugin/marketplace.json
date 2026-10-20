@@ -1,0 +1,12 @@
+{
+  "name": "claude-cute-companion",
+  "owner": { "name": "Arthur" },
+  "description": "desk-buddy: an animated mascot mod for Claude Code.",
+  "plugins": [
+    {
+      "name": "desk-buddy",
+      "source": "./",
+      "description": "A little animated mascot with her own look for each model. She types while Claude works, waves when it needs you, cheers when it is done."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "desk-buddy",
+  "version": "0.1.0",
+  "description": "A little animated mascot with her own look for each model. She types while Claude works, waves when it needs you, cheers when it is done.",
+  "author": { "name": "Arthur" },
+  "keywords": ["mod", "mascot", "pane", "animation"]
+}

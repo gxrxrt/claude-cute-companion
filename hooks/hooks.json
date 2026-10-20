@@ -1,0 +1,4 @@
+{
+  "description": "desk-buddy: animated mascot pane",
+  "modules": ["./register.ts"]
+}
