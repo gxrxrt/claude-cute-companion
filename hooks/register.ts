@@ -23,6 +23,23 @@ const LABELS = {
     attention: 'эй, посмотри сюда!',
     happy: 'готово!',
     oops: 'ой…',
+    reading: 'читаю…',
+    searching: 'ищу…',
+    writing: 'пишу код…',
+    terminal: 'колдую в терминале…',
+    web: 'гуглю…',
+    agent: 'позвала помощницу',
+    compact: 'утрамбовываю контекст…',
+    sleep: 'z z z',
+    wake: 'а? я не сплю!',
+    yawn: 'зеваю…',
+    stretch: 'потягиваюсь~',
+    sip: 'чаёк',
+    look: 'осматриваюсь',
+    smug: 'хе, изи',
+    dance: 'с первого раза!',
+    coffee: 'кофеёк',
+    late: 'поздно уже, иди спать…',
     theme: 'Фон:',
     dark: 'Тёмный',
     light: 'Светлый',
@@ -34,6 +51,23 @@ const LABELS = {
     attention: 'hey, look here!',
     happy: 'done!',
     oops: 'oops…',
+    reading: 'reading…',
+    searching: 'searching…',
+    writing: 'writing code…',
+    terminal: 'casting in the terminal…',
+    web: 'googling…',
+    agent: 'called a helper',
+    compact: 'squashing the context…',
+    sleep: 'z z z',
+    wake: "huh? I'm awake!",
+    yawn: 'yawning…',
+    stretch: 'stretching~',
+    sip: 'tea time',
+    look: 'looking around',
+    smug: 'heh, easy',
+    dance: 'first try!',
+    coffee: 'coffee time',
+    late: "it's late, go to bed…",
     theme: 'Background:',
     dark: 'Dark',
     light: 'Light',
@@ -58,12 +92,68 @@ let isSettingsOpen = false
 let ticks = 0
 let hold = 0
 let then: Mood = 'idle'
+// Life between turns: ticks since anything happened, when the next fidget
+// comes, whether it is night where the person sits.
+let idleTicks = 0
+let nextFidget = 25
+let isNight = false
+let isTurnRunning = false
+let turnHadError = false
+
+// What Claude's tools look like on her. A subagent's own calls are left out.
+const TOOL_MOODS: Record<string, Mood> = {
+  Read: 'reading',
+  NotebookRead: 'reading',
+  Grep: 'searching',
+  Glob: 'searching',
+  LS: 'searching',
+  ToolSearch: 'searching',
+  Edit: 'writing',
+  MultiEdit: 'writing',
+  Write: 'writing',
+  NotebookEdit: 'writing',
+  Bash: 'terminal',
+  PowerShell: 'terminal',
+  Monitor: 'terminal',
+  WebSearch: 'web',
+  WebFetch: 'web',
+  Agent: 'agent',
+  Task: 'agent',
+}
+// After a turn, five minutes of nothing puts her to sleep (600 ms ticks).
+const SLEEP_TICKS = 500
+// Moods she drifts through between turns, and how long each lasts.
+const FIDGETS: [Mood, number][] = [['yawn', 4], ['stretch', 4], ['sip', 8], ['look', 6]]
+// Calm moods: the nightcap stays on through these.
+const CALM: Mood[] = ['idle', 'sleep', 'wake', 'yawn', 'stretch', 'sip', 'look']
+// Moods that animate at half speed.
+const SLOW: Mood[] = ['sleep', 'sip', 'look']
+
+function toolMood(tool: string): Mood | undefined {
+  if (TOOL_MOODS[tool]) return TOOL_MOODS[tool]
+  if (/browser|chrome/i.test(tool)) return 'web'
+  return undefined
+}
 
 function setMood(next: Mood, holdTicks = 0, after: Mood = 'idle') {
   mood = next
   variant = 0
   hold = holdTicks
   then = after
+}
+
+// Anything that happened: she wakes up, and fidgets start over.
+function stir() {
+  idleTicks = 0
+  nextFidget = 20 + Math.floor(Math.random() * 25)
+}
+
+function captionOf(skin: Skin): string {
+  const words = LABELS[lang]
+  let text: string = words[mood]
+  if (mood === 'sip' && skin === 'sonnet') text = words.coffee
+  if (mood === 'idle' && isNight) text = words.late
+  return SKIN_NAMES[skin] + ' · ' + text
 }
 
 function savePrefs($: any) {
@@ -85,15 +175,16 @@ function draw($: any, e: any, rows: number, columns: number) {
   // Raster exists on the terminal only, Svg everywhere else.
   const { Raster, Svg } = $.ui.resolve(e) as Record<string, any>
   const skin = skinPin ?? skinAuto
-  const caption = SKIN_NAMES[skin] + ' · ' + LABELS[lang][mood]
+  const caption = captionOf(skin)
   const want = SIZES[size]!
+  const night = isNight && CALM.includes(mood)
 
   let picture
   if (e.surface === 'terminal' && Raster) {
     const px = fit(want.cells, columns, rows)
-    picture = Raster({ key: 'buddy', columns: px, rows: px / 2, cells: cellsFor(skin, mood, variant, px) })
+    picture = Raster({ key: 'buddy', columns: px, rows: px / 2, cells: cellsFor(skin, mood, variant, px, night) })
   } else if (Svg) {
-    picture = Svg({ source: svgFor(skin, mood, variant, want.svg), alt: caption, width: want.svg, height: want.svg })
+    picture = Svg({ source: svgFor(skin, mood, variant, want.svg, night), alt: caption, width: want.svg, height: want.svg })
   } else {
     picture = Text({ children: ['(' + caption + ')'] })
   }
@@ -217,7 +308,25 @@ export const register: Register = on => {
         })
     })
 
-    // One tick every 600 ms: wave, type, blink, and fall back to idle.
+    // Night is midnight to six, by the clock where she runs; asked now and
+    // once a minute.
+    const checkNight = () =>
+      $.clock
+        .now()
+        .then(ms => {
+          const night = new Date(ms).getHours() < 6
+          if (night === isNight) return
+          isNight = night
+          $.ui.invalidate('ui.render')
+        })
+        .catch(() => {
+          // keep what it was
+        })
+    await checkNight()
+    $.clock.every(60_000, () => void checkNight())
+
+    // One tick every 600 ms: wave, type, blink, fall back to idle, and between
+    // turns fidget now and then, and doze off after a while.
     $.clock.every(600, () => {
       ticks += 1
       let changed = false
@@ -229,13 +338,26 @@ export const register: Register = on => {
           changed = true
         }
       }
+      if (!isTurnRunning && CALM.includes(mood)) {
+        idleTicks += 1
+        if (mood !== 'sleep' && idleTicks >= SLEEP_TICKS) {
+          setMood('sleep')
+          changed = true
+        } else if (mood === 'idle' && idleTicks >= nextFidget) {
+          // late at night she mostly yawns
+          const [fidget, length] = isNight && Math.random() < 0.6 ? FIDGETS[0]! : FIDGETS[Math.floor(Math.random() * FIDGETS.length)]!
+          setMood(fidget, length, 'idle')
+          nextFidget = idleTicks + length + 20 + Math.floor(Math.random() * 30)
+          changed = true
+        }
+      }
       if (mood === 'idle') {
         const blink = ticks % 7 === 0 ? 1 : 0
         if (blink !== variant) {
           variant = blink
           changed = true
         }
-      } else {
+      } else if (!SLOW.includes(mood) || ticks % 2 === 0) {
         variant = variant ? 0 : 1
         changed = true
       }
@@ -311,35 +433,64 @@ export const register: Register = on => {
       } catch {
         // keep the last skin
       }
-      setMood('typing')
+      // asleep, she startles awake first
+      if (mood === 'sleep') setMood('wake', 3, 'typing')
+      else setMood('typing')
+      isTurnRunning = true
+      turnHadError = false
+      stir()
       $.ui.invalidate('ui.render')
     }
     return next(e)
   })
 
-  // The turn ends: cheer, shrug or settle down.
+  // The turn ends: cheer, shrug or settle down. Opus is smug after a long
+  // one; Sonnet dances when nothing failed along the way.
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
-      if (e.reason === 'answer') setMood('happy', 6, 'idle')
-      else if (e.reason === 'aborted') setMood('idle')
+      const skin = skinPin ?? skinAuto
+      if (e.reason === 'answer') {
+        if (skin === 'opus' && e.durationMs >= 60_000) setMood('smug', 8, 'idle')
+        else if (skin === 'sonnet' && !turnHadError) setMood('dance', 8, 'idle')
+        else setMood('happy', 6, 'idle')
+      } else if (e.reason === 'aborted') setMood('idle')
       else setMood('oops', 8, 'idle')
+      isTurnRunning = false
+      stir()
       $.ui.invalidate('ui.render')
     }
     return next(e)
   })
 
-  // Claude asks you a question: she waves until the call is answered.
+  // Each tool shows on her: reading, searching, writing, the terminal, the
+  // web, a helper. Claude asks you a question: she waves until it is answered.
   on('tool.call', async ($, e, next) => {
+    const busy = e.agentId === undefined ? toolMood(e.tool) : undefined
     if (e.tool === 'AskUserQuestion') {
       setMood('attention')
       $.ui.invalidate('ui.render')
+    } else if (busy && mood !== 'attention') {
+      setMood(busy)
+      $.ui.invalidate('ui.render')
     }
     const ran = await next(e)
-    if (mood === 'attention') {
-      setMood('typing')
+    if (mood === 'attention' || (busy && mood === busy)) {
+      setMood(isTurnRunning ? 'typing' : 'idle')
       $.ui.invalidate('ui.render')
     }
     return ran
+  }).catch(($, e, next) => next(e))
+
+  // The context gets compacted: she squashes the pages down.
+  on('session.compact', async ($, e, next) => {
+    setMood('compact')
+    $.ui.invalidate('ui.render')
+    try {
+      return await next(e)
+    } finally {
+      setMood(isTurnRunning ? 'typing' : 'idle')
+      $.ui.invalidate('ui.render')
+    }
   }).catch(($, e, next) => next(e))
 
   // A permission prompt is about to show: she waves.
@@ -354,6 +505,7 @@ export const register: Register = on => {
 
   // A tool failed: a short "oops", then back to work.
   on('classic.PostToolUseFailure', async ($, e, next) => {
+    turnHadError = true
     setMood('oops', 3, 'typing')
     $.ui.invalidate('ui.render')
     return next(e)

@@ -36,7 +36,64 @@ test('the mascot takes the skin of the model and cheers when a turn ends', async
 
   await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
   ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /Sonnet · готово/ })).toBeDefined()
+  // Sonnet dances when nothing failed
+  expect(await ui.find({ type: 'Text', text: /Sonnet · с первого раза/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('each tool shows on her, and she goes back to typing after it', async ($, on) => {
+  engine(on, 'claude-opus-5-5')
+  const seen: string[] = []
+  // The tool itself: look at her while it runs.
+  on('tool.call', async () => {
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    if (await ui.find({ type: 'Text', text: /читаю/ })) seen.push('reading')
+    if (await ui.find({ type: 'Text', text: /терминал/ })) seen.push('terminal')
+    await ui.unmount()
+    return { result: 'ok', text: 'ok' }
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ text: 'hi', turnId: 't1' })
+
+  await $.tool.call({ tool: 'Read', input: { file_path: '/a' } } as any)
+  await $.tool.call({ tool: 'Bash', input: { command: 'ls' } } as any)
+  expect(seen).toEqual(['reading', 'terminal'])
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Opus · печатаю/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a long turn leaves Opus smug, a short one just happy', async ($, on) => {
+  engine(on, 'claude-opus-5-5')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.turn.start({ text: 'hi', turnId: 't1' })
+  await $.turn.complete({ answer: 'ok', durationMs: 120_000, isAborted: false, turnId: 't1', reason: 'answer' })
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Opus · хе, изи/ })).toBeDefined()
+  await ui.unmount()
+
+  await $.turn.start({ text: 'hi', turnId: 't2' })
+  await $.turn.complete({ answer: 'ok', durationMs: 5_000, isAborted: false, turnId: 't2', reason: 'answer' })
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Opus · готово/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('five quiet minutes put her to sleep, a new turn wakes her', async ($, on) => {
+  engine(on, 'claude-opus-5-5')
+  const clock = mock.clock(on)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await clock.advance(600 * 510)
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /z z z/ })).toBeDefined()
+  await ui.unmount()
+
+  await $.turn.start({ text: 'hi', turnId: 't1' })
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /не сплю/ })).toBeDefined()
   await ui.unmount()
 })
 
