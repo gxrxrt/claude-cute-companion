@@ -187,6 +187,49 @@ test('the gear opens a row that switches the backdrop to the light theme and bac
   await ui.unmount()
 })
 
+test('with the question card up she stands under the last reply, until the next turn', async ($, on) => {
+  engine(on, 'claude-opus-5-5')
+  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('ui.render', ($: any, e: any) => $.ui.resolve(e).Text({ children: ['reply'] }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const reply = (requestId: string) =>
+    $.ui.mount({ plugin: 'desk-buddy', component: 'AssistantMessage', requestId, props: { text: 'hi', isFirstOfReply: true }, surface: 'desktop' } as any)
+
+  await $.turn.start({ text: 'hi', turnId: 't1' })
+  let old = await reply('m1')
+  await old.unmount()
+  await $.tool.call({ tool: 'mcp__ccd_turn__wrap_up', input: { recap: 'done', ask: 'Ship it?' } } as any)
+  await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  let ui = await reply('m2')
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /reply/ })).toBeDefined()
+  await ui.unmount()
+  // an older reply stays as it was
+  old = await reply('m1')
+  expect(await old.find({ type: 'Svg' })).toBeUndefined()
+  await old.unmount()
+
+  await $.turn.start({ text: 'yes', turnId: 't2' })
+  ui = await reply('m2')
+  expect(await ui.find({ type: 'Svg' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a recap without a question leaves the reply alone', async ($, on) => {
+  engine(on, 'claude-opus-5-5')
+  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('ui.render', ($: any, e: any) => $.ui.resolve(e).Text({ children: ['reply'] }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.turn.start({ text: 'hi', turnId: 't1' })
+  await $.tool.call({ tool: 'mcp__ccd_turn__wrap_up', input: { recap: 'done' } } as any)
+  await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ plugin: 'desk-buddy', component: 'AssistantMessage', requestId: 'm1', props: { text: 'hi', isFirstOfReply: true }, surface: 'desktop' } as any)
+  expect(await ui.find({ type: 'Svg' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('/buddy close hides her, /buddy shows her again, the desktop keeps her beside a survey', async ($, on) => {
   engine(on, 'claude-opus-5-5')
   // What the engine draws in the band when the mod passes.

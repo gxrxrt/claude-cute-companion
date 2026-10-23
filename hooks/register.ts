@@ -99,6 +99,14 @@ let nextFidget = 25
 let isNight = false
 let isTurnRunning = false
 let turnHadError = false
+// The desktop's next-step card with a question hides the band while it shows,
+// so she moves under the last reply meanwhile. The card is the app's own
+// `wrap_up` tool asked with a question; the next turn, or the band drawn again
+// (the card dismissed), ends it.
+let isCardUp = false
+let turnEndTick = 0
+const seenReplies = new Set<string>()
+let lastReplyId: string | null = null
 
 // What Claude's tools look like on her. A subagent's own calls are left out.
 const TOOL_MOODS: Record<string, Mood> = {
@@ -263,6 +271,28 @@ function draw($: any, e: any, rows: number, columns: number) {
 
 // Her at the left of a survey, small and waving, the survey as the engine drew
 // it taking the rest of the row. No backdrop: the survey's own card shows.
+// Her under the last reply, waving at the question card below it.
+function underReply($: any, e: any, reply: unknown) {
+  const { Box, Text, Svg } = $.ui.resolve(e) as Record<string, any>
+  if (!Svg) return reply
+  const skin = skinPin ?? skinAuto
+  const px = SIZES[size]!.svg
+  return Box({
+    flexDirection: 'column',
+    children: [
+      reply,
+      Box({
+        flexDirection: 'row',
+        alignItems: 'center',
+        children: [
+          Svg({ source: svgFor(skin, 'attention', ticks % 2, px), alt: SKIN_NAMES[skin], width: px, height: px }),
+          Text({ dimColor: true, children: [' ' + SKIN_NAMES[skin] + ' · ' + LABELS[lang].attention] }),
+        ],
+      }),
+    ],
+  })
+}
+
 function besideSurvey($: any, e: any, survey: unknown) {
   const { Box, Svg } = $.ui.resolve(e) as Record<string, any>
   if (!Svg) return survey
@@ -382,6 +412,8 @@ export const register: Register = on => {
         variant = variant ? 0 : 1
         changed = true
       }
+      // under the reply she waves on every tick
+      if (isCardUp && !isTurnRunning) changed = true
       if (changed) $.ui.invalidate('ui.render')
     })
 
@@ -459,6 +491,7 @@ export const register: Register = on => {
       else setMood('typing')
       isTurnRunning = true
       turnHadError = false
+      isCardUp = false
       stir()
       $.ui.invalidate('ui.render')
     }
@@ -477,6 +510,7 @@ export const register: Register = on => {
       } else if (e.reason === 'aborted') setMood('idle')
       else setMood('oops', 8, 'idle')
       isTurnRunning = false
+      turnEndTick = ticks
       stir()
       $.ui.invalidate('ui.render')
     }
@@ -486,6 +520,10 @@ export const register: Register = on => {
   // Each tool shows on her: reading, searching, writing, the terminal, the
   // web, a helper. Claude asks you a question: she waves until it is answered.
   on('tool.call', async ($, e, next) => {
+    if (e.agentId === undefined && /(^|__)wrap_up$/.test(e.tool)) {
+      const input = e.input as { ask?: string; actions?: unknown[] } | undefined
+      if (input?.ask || input?.actions?.length) isCardUp = true
+    }
     const busy = e.agentId === undefined ? toolMood(e.tool) : undefined
     if (e.tool === 'AskUserQuestion') {
       setMood('attention')
@@ -537,6 +575,11 @@ export const register: Register = on => {
   // terminal, short of room, leaves the band to the survey. Should the surface
   // refuse the pair, the engine draws its survey alone.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    // The band drawn again a while after the turn: the card was dismissed.
+    if (isCardUp && !isTurnRunning && ticks - turnEndTick > 3) {
+      isCardUp = false
+      $.ui.invalidate('ui.render')
+    }
     if (isHidden) return next(e)
     if (e.props.hasSurvey) {
       const survey = await next(e)
@@ -544,5 +587,17 @@ export const register: Register = on => {
       return besideSurvey($, e, survey)
     }
     return draw($, e, e.props.maxRows, e.props.bodyColumns)
+  })
+
+  // Each block of a reply: the newest one first seen is the last reply, and
+  // while the question card is up she stands under it.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (!seenReplies.has(e.requestId)) {
+      seenReplies.add(e.requestId)
+      lastReplyId = e.requestId
+    }
+    const reply = await next(e)
+    if (isHidden || !isCardUp || isTurnRunning || e.requestId !== lastReplyId || e.surface !== 'desktop') return reply
+    return underReply($, e, reply)
   })
 }
