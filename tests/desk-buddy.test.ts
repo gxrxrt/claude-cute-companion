@@ -110,6 +110,26 @@ test('/buddy bg paints the band on the desktop only, and rejects a wrong color',
   await ui.unmount()
 })
 
+test('the gear opens a row that switches the backdrop to the light theme and back', async ($, on) => {
+  engine(on, 'claude-opus-5-5')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Button', key: 'bg-light' } as any)).toBeUndefined()
+  await ui.press({ key: 'settings' })
+  await ui.press({ key: 'bg-light' })
+  await ui.unmount()
+
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Box' }))?.props?.backgroundColor).toBe('#faf9f5')
+  await ui.press({ key: 'bg-dark' })
+  await ui.unmount()
+
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Box' }))?.props?.backgroundColor).toBe('#151515')
+  await ui.unmount()
+})
+
 test('/buddy close hides her, /buddy shows her again, a survey takes the band', async ($, on) => {
   engine(on, 'claude-opus-5-5')
   // What the engine draws in the band when the mod passes.

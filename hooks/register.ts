@@ -13,6 +13,9 @@ const SIZES: Record<string, { cells: number; svg: number }> = {
   l: { cells: 32, svg: 160 },
 }
 
+// The app's own backgrounds, one per theme, that the band melts into.
+const THEMES = { dark: '#151515', light: '#faf9f5' } as const
+
 const LABELS = {
   ru: {
     idle: 'отдыхаю',
@@ -20,6 +23,10 @@ const LABELS = {
     attention: 'эй, посмотри сюда!',
     happy: 'готово!',
     oops: 'ой…',
+    theme: 'Фон:',
+    dark: 'Тёмный',
+    light: 'Светлый',
+    off: 'Без фона',
   },
   en: {
     idle: 'chilling',
@@ -27,6 +34,10 @@ const LABELS = {
     attention: 'hey, look here!',
     happy: 'done!',
     oops: 'oops…',
+    theme: 'Background:',
+    dark: 'Dark',
+    light: 'Light',
+    off: 'None',
   },
 } as const
 
@@ -42,6 +53,8 @@ let isHidden = false
 // dark theme's); null leaves the card the app draws behind her as it is.
 let backdrop: string | null = '#151515'
 let lang: 'ru' | 'en' = 'ru'
+// The little settings row under her caption, opened by the gear.
+let isSettingsOpen = false
 let ticks = 0
 let hold = 0
 let then: Mood = 'idle'
@@ -51,6 +64,10 @@ function setMood(next: Mood, holdTicks = 0, after: Mood = 'idle') {
   variant = 0
   hold = holdTicks
   then = after
+}
+
+function savePrefs($: any) {
+  return $.store.set('prefs', { skin: skinPin, size, lang, isHidden, bg: backdrop ?? 'off' })
 }
 
 // The biggest of 16, 24 that fits the room the band has, up to `want`.
@@ -64,7 +81,7 @@ function fit(want: number, columns: number, rows: number): number {
 // She at the left, her caption beside her. `rows` and `columns` are the room
 // the band has.
 function draw($: any, e: any, rows: number, columns: number) {
-  const { Box, Text } = $.ui.resolve(e)
+  const { Box, Text, Button } = $.ui.resolve(e)
   // Raster exists on the terminal only, Svg everywhere else.
   const { Raster, Svg } = $.ui.resolve(e) as Record<string, any>
   const skin = skinPin ?? skinAuto
@@ -81,7 +98,56 @@ function draw($: any, e: any, rows: number, columns: number) {
     picture = Text({ children: ['(' + caption + ')'] })
   }
 
-  const content = [picture, Text({ dimColor: true, children: [' ' + caption] })]
+  // A gear beside the caption opens a row to pick the backdrop: one per theme
+  // of the app, or none.
+  const words = LABELS[lang]
+  const setBackdrop = (bg: string | null) => {
+    backdrop = bg
+    void savePrefs($)
+    $.ui.invalidate('ui.render')
+  }
+  const choice = (key: string, label: string, bg: string | null) =>
+    Button({
+      key: 'bg-' + key,
+      label: (backdrop === bg ? '• ' : '') + label,
+      plain: true,
+      dimColor: backdrop !== bg,
+      onPress: () => setBackdrop(bg),
+    })
+  const gear = Button({
+    key: 'settings',
+    label: '⚙',
+    plain: true,
+    dimColor: !isSettingsOpen,
+    onPress: () => {
+      isSettingsOpen = !isSettingsOpen
+      $.ui.invalidate('ui.render')
+    },
+  })
+  const lines = [
+    Box({
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 1,
+      children: [Text({ dimColor: true, children: [' ' + caption] }), gear],
+    }),
+  ]
+  if (isSettingsOpen) {
+    lines.push(
+      Box({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 1,
+        children: [
+          Text({ dimColor: true, children: [' ' + words.theme] }),
+          choice('dark', words.dark, THEMES.dark),
+          choice('light', words.light, THEMES.light),
+          choice('off', words.off, null),
+        ],
+      }),
+    )
+  }
+  const content = [picture, Box({ flexDirection: 'column', children: lines })]
   if (!backdrop || e.surface === 'terminal') {
     return Box({ flexDirection: 'row', justifyContent: 'flex-start', alignItems: 'center', children: content })
   }
@@ -109,7 +175,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'buddy',
       description: 'Show, hide or tune the mascot above the prompt',
-      argumentHint: '[close | skin <name|auto> | size <s|m|l> | bg <#rrggbb|off> | lang <ru|en>]',
+      argumentHint: '[close | skin <name|auto> | size <s|m|l> | bg <dark|light|#rrggbb|off> | lang <ru|en>]',
       immediate: true,
     })
 
@@ -187,7 +253,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'buddy' }, async ($, e) => {
     const [word = '', arg = ''] = e.args.trim().split(/\s+/)
-    const save = () => $.store.set('prefs', { skin: skinPin, size, lang, isHidden, bg: backdrop ?? 'off' })
+    const save = () => savePrefs($)
 
     if (word === 'close') {
       isHidden = true
@@ -216,8 +282,9 @@ export const register: Register = on => {
     }
     if (word === 'bg') {
       if (arg === 'off') backdrop = null
+      else if (arg === 'dark' || arg === 'light') backdrop = THEMES[arg]
       else if (HEX.test(arg)) backdrop = arg
-      else return { text: 'Background: #rrggbb to match the app (dark theme: #151515), or off.' }
+      else return { text: 'Background: dark, light, #rrggbb to match the app, or off.' }
       await save()
       $.ui.invalidate('ui.render')
       return { text: 'Background: ' + (backdrop ?? 'off') }
