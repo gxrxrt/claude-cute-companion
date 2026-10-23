@@ -261,6 +261,27 @@ function draw($: any, e: any, rows: number, columns: number) {
   })
 }
 
+// Her at the left of a survey, small and waving, the survey as the engine drew
+// it taking the rest of the row. No backdrop: the survey's own card shows.
+function besideSurvey($: any, e: any, survey: unknown) {
+  const { Box, Svg } = $.ui.resolve(e) as Record<string, any>
+  if (!Svg) return survey
+  const skin = skinPin ?? skinAuto
+  const px = SIZES.s!.svg
+  return Box({
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 1,
+    children: [
+      Box({
+        flexShrink: 0,
+        children: [Svg({ source: svgFor(skin, 'attention', variant, px), alt: SKIN_NAMES[skin], width: px, height: px })],
+      }),
+      Box({ flexGrow: 1, flexShrink: 1, children: [survey] }),
+    ],
+  })
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -511,10 +532,17 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // The band right above the prompt, in the chat column. A survey owns it while
-  // it shows.
+  // The band right above the prompt, in the chat column. While a survey holds
+  // it, the desktop keeps her small at its side, waving at the question; the
+  // terminal, short of room, leaves the band to the survey. Should the surface
+  // refuse the pair, the engine draws its survey alone.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (isHidden || e.props.hasSurvey) return next(e)
+    if (isHidden) return next(e)
+    if (e.props.hasSurvey) {
+      const survey = await next(e)
+      if (!survey || e.surface !== 'desktop') return survey
+      return besideSurvey($, e, survey)
+    }
     return draw($, e, e.props.maxRows, e.props.bodyColumns)
   })
 }

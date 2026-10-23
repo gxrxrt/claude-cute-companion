@@ -187,7 +187,7 @@ test('the gear opens a row that switches the backdrop to the light theme and bac
   await ui.unmount()
 })
 
-test('/buddy close hides her, /buddy shows her again, a survey takes the band', async ($, on) => {
+test('/buddy close hides her, /buddy shows her again, the desktop keeps her beside a survey', async ($, on) => {
   engine(on, 'claude-opus-5-5')
   // What the engine draws in the band when the mod passes.
   on('ui.render', ($: any, e: any) => $.ui.resolve(e).Text({ children: ['engine'] }))
@@ -204,7 +204,14 @@ test('/buddy close hides her, /buddy shows her again, a survey takes the band', 
   expect(await ui.find({ type: 'Svg' })).toBeDefined()
   await ui.unmount()
 
+  // the desktop keeps her beside the survey, the terminal leaves it the band
   ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, hasSurvey: true }, surface: 'desktop' })
-  expect(await ui.find({ type: 'Svg' })).toBeUndefined()
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /engine/ })).toBeDefined()
+  await ui.unmount()
+
+  ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, hasSurvey: true }, surface: 'terminal' })
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /engine/ })).toBeDefined()
   await ui.unmount()
 })
